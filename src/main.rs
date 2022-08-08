@@ -336,6 +336,72 @@ fn main() -> std::io::Result<()> {
                 socket.write(&(printout.len() as u64).to_be_bytes())?;
                 socket.write(printout.as_bytes())?;
             },
+//   5. Appending nodes
+//   6. Deleting nodes
+//   7. Mutating nodes
+            5 => { //new node from node
+                let mut length: [u8; 8] = [0; 8];
+                socket.read(&mut length)?;
+                let length = u64::from_be_bytes(length);
+                let mut extra = Vec::new();
+                extra.resize(length as usize, 0);
+                socket.read(&mut extra[0..length as usize])?;
+                let mut node = Node::from_bytes(extra);
+                graph.append_node(node);
+            },
+            6 => { //new node
+                // fetch name
+                let mut str_length = [0; 1];
+                socket.read(&mut str_length)?;
+                let str_length = str_length[0];
+                let mut name = Vec::new();
+                name.resize(str_length as usize, 0);
+                socket.read(&mut name[0..str_length as usize])?;
+                let name = String::from_utf8(name).unwrap();
+                // fetch id as u64
+                let mut id = [0; 2];
+                socket.read(&mut id)?;
+                let id = u16::from_be_bytes(id);
+                // fetch value
+                let mut vtype = [0; 1];
+                socket.read(&mut vtype)?;
+                let vtype = vtype[0];
+                match vtype {
+                    0 => { //Num
+                        let mut val = [0; 8];
+                        socket.read(&mut val)?;
+                        let val = isize::from_be_bytes(val);
+                        graph.append(&name, id, val);
+                    },
+                    1 => { //Txt
+                        let mut val_length = [0;1];
+                        socket.read(&mut val_length)?;
+                        let val_length = val_length[0];
+                        let mut val = Vec::new();
+                        val.resize(val_length as usize, 0);
+                        socket.read(&mut val[0..val_length as usize])?;
+                        let val = String::from_utf8(val).unwrap();
+                        graph.append(&name, id, val);
+                    },
+                    2 => { //Bool
+                        let mut val = [0; 1];
+                        socket.read(&mut val)?;
+                        match val[0] {
+                            0 => graph.append(&name, id, false),
+                            1 => graph.append(&name, id, true),
+                            _ => {//handle shit
+
+                            }
+                        }
+                    },
+                    3 => { //None
+                        graph.append(&name, id, ());
+                    },
+                    _ => {//handle shit
+
+                    }
+                }
+            },
             255 => { //quit
                 println!("Quitting!");
                 break

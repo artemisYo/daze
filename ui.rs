@@ -8,8 +8,6 @@ use std::io::{Write, Read};
 // 4. Print
 
 // TODO:
-// 1. Print show in the ui, not the server interface
-// >> continue work on the actual database
 
 fn main() -> std::io::Result<()> {
     let mut stream: TcpStream;
@@ -67,6 +65,25 @@ fn main() -> std::io::Result<()> {
                     stream.read(&mut printout[0..length as usize])?;
                     let printout = String::from_utf8(printout.to_vec()).unwrap();
                     println!("{}", printout);
+                },
+                "add" => {
+                    let add_type = tokens[t+1];
+                    match add_type {
+                        "node" => {
+                            let node = tokens[t+2];
+                            stream.write(&[5])?;
+                            stream.write(&(node.len() as u64).to_be_bytes())?;
+                            stream.write(node.to_bytes())?;
+                        },
+                        "values" => {
+                            let name = tokens[t+2];
+                            let id = usize::from_str(tokens[t+3])?;
+                            let val_type = tokens[t+4];
+                            // TODO: make this work aaaaaaaaaaa
+                            stream.write(&[6])?;
+                        },
+                        _ => {}
+                    }
                 },
                 _ => {}
             }
