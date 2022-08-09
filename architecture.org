@@ -1,0 +1,19 @@
+* Architecture
+This file here is to document the architecture of daze.
+** File Format
+As of now, since I have not yet written any sort of querying data, the format in which the data is stored looks something like this:
+~NodeName,NodeId,NodeValue,NodeRelation:NodeRelation:~
+A few things are to note:
+1. NodeValue is not a single value, instead it consists of one byte signifying how to interpret the following data, and the data itself.
+2. NodeRelation can be extended as many times as you want, it's to represent the vector of IDs that reflect a nodes relationship to other nodes.
+
+** Connection Concurrency
+Daze, requiring a concurrency model, utilizes rust's ~RwLock~ primitive in order to ensure that only one thread may write at a time.
+
+** Tcp Packets
+Daze, using tcp to receive commands which are to execute, uses a simple enumeration of commands.
+A command packet is one byte in size and is simply a number.
+Some commands -more precisely ones that need extra information, such as a filename- will require you to send extra packets afterwards.
+The structure in which those packets are sent, usually looks something like ~packet length, packet~, this is mainly used for strings.
+When numbers are sent, which are known to be of one type, they're sent without a packet length message, instead it's simply a fixed length packet, usually of size 8B.
+When sending a command that can be ambigous in it's extra information portion, like appending a node, the type of the extra information is sent before the length packet, this, again, done through a simple number of size 1B.
