@@ -239,10 +239,7 @@ fn main() {
     if !open_filename.is_empty() {
 	graph = Arc::new(RwLock::new(Graph::from_bytes(std::fs::read(open_filename).expect("Couldn't open file!"))));
     } else {
-	//graph = Arc::new(RwLock::new(Graph::new()));
-	let mut idk = Graph::new();
-	idk.graph.insert(0, Node {id: 0, name: "Node1".to_string(), value: Val::None, relations: Vec::new()});
-	graph = Arc::new(RwLock::new(idk));
+	graph = Arc::new(RwLock::new(Graph::new()));
     }
     // look through incoming connections and spawn new threads for each
     // TODO: some way to shut down daze without C-c
