@@ -1,18 +1,15 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::net::{TcpListener, TcpStream, Shutdown};
+use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::env::args;
 use std::process::exit;
 use std::convert::TryInto;
-use std::io::{Write, Read};
+use std::io::{Read, Write};
 use std::sync::{Arc, RwLock};
 
 // TODO:
-//   1. See line ~103
-//   2. Serializing and Deserializing
-//   3. Graph operations
-//   4. Querying
+//   1. Querying
 
 struct Graph {
     graph: HashMap<u64, Node>,
@@ -25,6 +22,68 @@ impl Graph {
 	    graph: HashMap::new(),
 	    counter: 0
 	}
+    }
+    fn append<T: Wrappable>(&mut self, name: &str, value: T) -> u64 {
+	let node = Node {
+	    name: name.to_string(),
+	    id: self.counter,
+	    value: value.wrap(),
+	    relations: Vec::new()
+	};
+	self.graph.insert(self.counter, node);
+	self.counter += 1;
+	return self.counter - 1
+    }
+    fn insert<T: Wrappable>(&mut self, name: &str, value: T, id: u64) {
+	let node = Node {
+	    name: name.to_string(),
+	    id: id,
+	    value: value.wrap(),
+	    relations: Vec::new()
+	};
+	self.graph.insert(id, node);
+	if self.counter < id {self.counter = id}
+    }
+    fn delete(&mut self, id: u64) -> Option<Node> {
+	self.graph.remove(&id)
+    }
+    fn set_relations(&mut self, id: u64, relations: Vec<u64>) -> Result<(), String> {
+	if let Some(node) = self.graph.get_mut(&id) {
+	    node.relations = relations;
+	} else {
+	    return Err("Could not find node under given id!".to_string())
+	}
+	Ok(())
+    }
+    fn set_name(&mut self, id: u64, name: &str) -> Result<(), String> {
+	if let Some(node) = self.graph.get_mut(&id) {
+	    node.name = name.to_string();
+	} else {
+	    return Err("Could not find node under given id!".to_string())
+	}
+	Ok(())
+    }
+    fn set_value<T: Wrappable>(&mut self, id: u64, value: T) -> Result<(), String> {
+	if let Some(node) = self.graph.get_mut(&id) {
+	    node.value = value.wrap();
+	} else {
+	    return Err("Could not find node under given id!".to_string())
+	}
+	Ok(())
+    }
+    fn print_graph(&self) -> String {
+	let mut out = String::new();
+	out.push_str("digraph {\n");
+	for (_, v) in self.graph.iter() {
+	    out.push_str(&format!("{}[label=\"{}\"]\n", v.id, v));
+	    if !v.relations.is_empty() {
+		for i in v.relations.iter() {
+		    out.push_str(&format!("{} -> {}\n", v.id, i));
+		}
+	    }
+	}
+	out.push_str("}");
+	return out
     }
 }
 // Methods concerning serialization
@@ -126,6 +185,12 @@ impl std::fmt::Display for Node {
 	           self.id, self.name, self.value, self.relations)
     }
 }
+impl std::fmt::Debug for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	write!(f, "id {} name {} value {} links {:?}",
+	           self.id, self.name, self.value, self.relations)
+    }
+}
 
 enum Val {
     None,
@@ -181,6 +246,16 @@ impl std::fmt::Display for Val {
 	}
     }
 }
+impl std::fmt::Debug for Val {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	match self {
+	    Self::None    => write!(f, "None"),
+	    Self::Num(x)  => write!(f, "{}", x),
+	    Self::Txt(s)  => write!(f, "{}", s),
+	    Self::Bool(b) => write!(f, "{}", b)
+	}
+    }
+}
 
 trait Wrappable           {fn wrap(self) -> Val;}
 impl Wrappable for isize  {fn wrap(self) -> Val {Val::Num(self)}}
@@ -188,6 +263,7 @@ impl Wrappable for String {fn wrap(self) -> Val {Val::Txt(self)}}
 impl Wrappable for &str   {fn wrap(self) -> Val {Val::Txt(self.to_string())}}
 impl Wrappable for bool   {fn wrap(self) -> Val {Val::Bool(self)}}
 impl Wrappable for ()     {fn wrap(self) -> Val {Val::None}}
+impl Wrappable for Val    {fn wrap(self) -> Val {self}}
 
 fn main() {
     let mut args = args().collect::<VecDeque<String>>();
@@ -240,6 +316,20 @@ fn main() {
 	graph = Arc::new(RwLock::new(Graph::from_bytes(std::fs::read(open_filename).expect("Couldn't open file!"))));
     } else {
 	graph = Arc::new(RwLock::new(Graph::new()));
+	/*let mut temp = Graph::new();
+	temp.insert("node0", 15, 0);
+	temp.insert("node1", "some text", 1);
+	temp.insert("node2", true, 2);
+	temp.insert("node3", false, 3);
+	temp.insert("node4", false, 4);
+	temp.insert("node5", false, 5);
+	temp.insert("node6", false, 6);
+	temp.set_relations(0, vec![1, 2, 3]);
+	temp.set_relations(2, vec![0, 3]);
+	temp.set_relations(3, vec![2]);
+	temp.set_relations(4, vec![2]);
+	temp.set_relations(5, vec![2]);
+	graph = Arc::new(RwLock::new(temp));*/
     }
     // look through incoming connections and spawn new threads for each
     // TODO: some way to shut down daze without C-c
@@ -247,7 +337,7 @@ fn main() {
 	match stream {
 	    Ok(s) => {
 		// spawn new instance of RwLock to pass to the thread
-		let mut graph_copy = Arc::clone(&graph);
+		let graph_copy = Arc::clone(&graph);
 		// spawn new thread which handles requests
 		thread::spawn(move || {handle_requests(s, graph_copy)});
 	    },
@@ -260,7 +350,7 @@ fn main() {
 }
 
 // TODO: Do the actual request handling
-fn handle_requests(mut stream: TcpStream, mut graph: Arc<RwLock<Graph>>) -> std::io::Result<()> {
+fn handle_requests(mut stream: TcpStream, graph: Arc<RwLock<Graph>>) -> std::io::Result<()> {
     let stream_address = stream.peer_addr()?;
     println!("accepted a stream: {:?}", stream_address);
     loop {
@@ -272,29 +362,37 @@ fn handle_requests(mut stream: TcpStream, mut graph: Arc<RwLock<Graph>>) -> std:
 		break
 	    },
 	    1 => { // print
+		println!("Entered print command!");
 		// Tries to get read access, if it takes longer sends message
 		// Simply panics if the RwLock is poisoned
+		println!("Connection [{}] is trying to get read access!", stream_address);
 		let first_attempt = graph.try_read();
 		if first_attempt.is_err() {
-		    println!("The graph is currently inacessible, waiting to receive read access!");
+		    stream.write(&(67 as u64).to_be_bytes())?;
+		    stream.write("The graph is currently inacessible, waiting to receive read access!".as_bytes())?;
 		    let snapshot = graph.read().unwrap();
-		    println!("{}", snapshot);
+		    let printout = format!("{}", snapshot);
+		    stream.write(&(printout.len() as u64).to_be_bytes())?;
+		    stream.write(printout.as_bytes())?;
 		} else {
-		    println!("{}", first_attempt.unwrap());
+		    let printout = format!("{}", first_attempt.unwrap());
+		    stream.write(&(printout.len() as u64).to_be_bytes())?;
+		    stream.write(printout.as_bytes())?;
 		}
 	    },
-	    2 => { // open file 
+	    2 => { // open file TODO! 
 		let mut name_length_packet = [0;8];
 		stream.read(&mut name_length_packet)?;
 		let name_length = u64::from_be_bytes(name_length_packet);
 		let mut name_packet: Vec<u8> = Vec::new();
 		name_packet.resize(name_length as usize, 0);
 		stream.read(&mut name_packet[0..name_length as usize])?;
-		let name = String::from_utf8(name_packet).expect("Couldn't convert name packet to string!");
+		let _name = String::from_utf8(name_packet).expect("Couldn't convert name packet to string!");
 		// TODO: decide how to handle a thread opening a file
 		// iows: should it be opened locally or globally
 	    },
 	    3 => { // write file
+		println!("Entered write file command!");
 		// get filename
 		let mut name_length_packet = [0;8];
 		stream.read(&mut name_length_packet)?;
@@ -303,16 +401,299 @@ fn handle_requests(mut stream: TcpStream, mut graph: Arc<RwLock<Graph>>) -> std:
 		name_packet.resize(name_length as usize, 0);
 		stream.read(&mut name_packet[0..name_length as usize])?;
 		let name = String::from_utf8(name_packet).expect("Couldn't convert name packet to string!");
+		println!("Name read!");
 		// get graph
+		println!("Connection [{}] is trying to get read access!", stream_address);
 		let first_attempt = graph.try_read();
 		let snapshot;
 		if first_attempt.is_err() {
-		    println!("The graph is currently inacessible, waiting to receive read access!");
+		    stream.write(&(67 as u64).to_be_bytes())?;
+		    stream.write("The graph is currently inacessible, waiting to receive read access!".as_bytes())?;
 		    snapshot = graph.read().unwrap();
 		} else {
 		    snapshot = first_attempt.unwrap();
 		}
-		std::fs::write(name, snapshot.to_bytes());
+		std::fs::write(&name, snapshot.to_bytes())?;
+		let printout = format!("Wrote file: [{}]", name);
+		println!("Wrote file: [{}]", name);
+		stream.write(&(printout.len() as usize).to_be_bytes())?;
+		stream.write(printout.as_bytes())?;
+	    },
+	    4 => { // append node
+		println!("Entered append command!");
+		// get values for node
+		let mut name_length_packet = [0;8];
+		stream.read(&mut name_length_packet)?;
+		let name_length = u64::from_be_bytes(name_length_packet);
+		let mut name_packet: Vec<u8> = Vec::new();
+		name_packet.resize(name_length as usize, 0);
+		stream.read(&mut name_packet[0..name_length as usize])?;
+		let name = String::from_utf8(name_packet).expect("Couldn't convert name pacjet to string!");
+		println!("Name read!");
+		let mut value_type = [0;1];
+		let value: Val;
+		stream.read(&mut value_type)?;
+		match value_type[0] {
+		    0 => {value = Val::None;},
+		    1 => {
+			let mut num_packet = [0;8];
+			stream.read(&mut num_packet)?;
+			let num = isize::from_be_bytes(num_packet);
+			value = Val::Num(num);
+		    },
+		    2 => {
+			let mut txt_size_packet = [0;8];
+			stream.read(&mut txt_size_packet)?;
+			let txt_size = u64::from_be_bytes(txt_size_packet);
+			let mut txt_packet: Vec<u8> = Vec::new();
+			txt_packet.resize(txt_size as usize, 0);
+			stream.read(&mut txt_packet[0..txt_size as usize])?;
+			let txt = String::from_utf8(txt_packet)
+			    .expect("Could not convert text packet to string!");
+			value = Val::Txt(txt);
+		    },
+		    3 => {
+			let mut bool_packet = [0;1];
+			stream.read(&mut bool_packet)?;
+			match bool_packet[0] {
+			    0 => value = Val::Bool(false),
+			    1 => value = Val::Bool(true),
+			    _ => unreachable!()
+			}
+		    },
+		    _ => unreachable!()
+		}
+		println!("Value read!");
+		// get graph
+		println!("Connection [{}] is trying to get read access!", stream_address);
+		let first_attempt = graph.try_write();
+		let mut snapshot;
+		if first_attempt.is_err() {
+		    stream.write(&(67 as u64).to_be_bytes())?;
+		    stream.write("The graph is currently inacessible, waiting to receive read access!".as_bytes())?;
+		    snapshot = graph.write().unwrap();
+		} else {
+		    snapshot = first_attempt.unwrap();
+		}
+		// do the thing
+		let aids = snapshot.append(&name, value);
+		println!("Appended id: [{}]", aids);
+		stream.write(&aids.to_be_bytes())?;
+	    },
+	    5 => { // insert node
+		println!("Entered insert command!");
+		// get values for node
+		let mut name_length_packet = [0;8];
+		stream.read(&mut name_length_packet)?;
+		let name_length = u64::from_be_bytes(name_length_packet);
+		let mut name_packet: Vec<u8> = Vec::new();
+		name_packet.resize(name_length as usize, 0);
+		stream.read(&mut name_packet[0..name_length as usize])?;
+		let name = String::from_utf8(name_packet).expect("Couldn't convert name pacjet to string!");
+		println!("Name read!");
+		let mut value_type = [0;1];
+		let value: Val;
+		stream.read(&mut value_type)?;
+		match value_type[0] {
+		    0 => {value = Val::None;},
+		    1 => {
+			let mut num_packet = [0;8];
+			stream.read(&mut num_packet)?;
+			let num = isize::from_be_bytes(num_packet);
+			value = Val::Num(num);
+		    },
+		    2 => {
+			let mut txt_size_packet = [0;8];
+			stream.read(&mut txt_size_packet)?;
+			let txt_size = u64::from_be_bytes(txt_size_packet);
+			let mut txt_packet: Vec<u8> = Vec::new();
+			txt_packet.resize(txt_size as usize, 0);
+			stream.read(&mut txt_packet[0..txt_size as usize])?;
+			let txt = String::from_utf8(txt_packet)
+			    .expect("Could not convert text packet to string!");
+			value = Val::Txt(txt);
+		    },
+		    3 => {
+			let mut bool_packet = [0;1];
+			stream.read(&mut bool_packet)?;
+			match bool_packet[0] {
+			    0 => value = Val::Bool(false),
+			    1 => value = Val::Bool(true),
+			    _ => unreachable!()
+			}
+		    },
+		    _ => unreachable!()
+		}
+		println!("Value read!");
+		let mut id_packet = [0;8];
+		stream.read(&mut id_packet)?;
+		let id = u64::from_be_bytes(id_packet);
+		println!("Id read!");
+		// get graph
+		println!("Connection [{}] is trying to get read access!", stream_address);
+		let first_attempt = graph.try_write();
+		let mut snapshot;
+		if first_attempt.is_err() {
+		    stream.write(&(67 as u64).to_be_bytes())?;
+		    stream.write("The graph is currently inacessible, waiting to receive read access!".as_bytes())?;
+		    snapshot = graph.write().unwrap();
+		} else {
+		    snapshot = first_attempt.unwrap();
+		}
+		// do the thing
+		snapshot.insert(&name, value, id);
+	    },
+	    6 => { // delete node
+		println!("Entered delete command!");
+		// get id
+		let mut id_packet = [0;8];
+		stream.read(&mut id_packet)?;
+		let id = u64::from_be_bytes(id_packet);
+		println!("Read id!");
+		// get graph
+		println!("Connection [{}] is trying to get read access!", stream_address);
+		let mut snapshot;
+		let first_attempt = graph.try_write();
+		if first_attempt.is_err() {
+		    stream.write(&(67 as u64).to_be_bytes())?;
+		    stream.write("The graph is currently inacessible, waiting to receive read access!".as_bytes())?;
+		    snapshot = graph.write().unwrap();
+		} else {
+		    snapshot = first_attempt.unwrap();
+		}
+		// do the thing
+		if let Some(_) = snapshot.delete(id) {/*dkals*/}
+	    },
+	    7 => { // set relations for node
+		println!("Entered set relations command!");
+		let mut id_packet = [0;8];
+		stream.read(&mut id_packet)?;
+		let id = u64::from_be_bytes(id_packet);
+		println!("Read id!");
+		let mut relations: Vec<u64> = Vec::new();
+		let mut relations_number_packet = [0;8];
+		stream.read(&mut relations_number_packet)?;
+		let relations_number = u64::from_be_bytes(relations_number_packet);
+		for _ in 0..relations_number {
+		    let mut relation_packet = [0;8];
+		    stream.read(&mut relation_packet)?;
+		    relations.push(u64::from_be_bytes(relation_packet));
+		}
+		println!("Read relations!");
+		// get graph
+		println!("Connection [{}] is trying to get read access!", stream_address);
+		let mut snapshot;
+		let first_attempt = graph.try_write();
+		if first_attempt.is_err() {
+		    stream.write(&(67 as u64).to_be_bytes())?;
+		    stream.write("The graph is currently inacessible, waiting to receive read access!".as_bytes())?;
+		    snapshot = graph.write().unwrap();
+		} else {
+		    snapshot = first_attempt.unwrap();
+		}
+		// do the thing
+		if let Ok(_) = snapshot.set_relations(id, relations) {/*aaaaaa*/}
+	    },
+	    8 => { // set name for node
+		println!("Entered set name command!");
+		let mut id_packet = [0;8];
+		stream.read(&mut id_packet)?;
+		let id = u64::from_be_bytes(id_packet);
+		println!("Read id!");
+		let mut name_length_packet = [0;8];
+		stream.read(&mut name_length_packet)?;
+		let name_length = u64::from_be_bytes(name_length_packet);
+		let mut name_packet: Vec<u8> = Vec::new();
+		name_packet.resize(name_length as usize, 0);
+		stream.read(&mut name_packet)?;
+		let name = String::from_utf8(name_packet).expect("Couldn't convert name packet to string!");
+		println!("Read name!");
+		// get graph
+		println!("Connection [{}] is trying to get read access!", stream_address);
+		let mut snapshot;
+		let first_attempt = graph.try_write();
+		if first_attempt.is_err() {
+		    stream.write(&(67 as u64).to_be_bytes())?;
+		    stream.write("The graph is currently inacessible, waiting to receive read access!".as_bytes())?;
+		    snapshot = graph.write().unwrap();
+		} else {
+		    snapshot = first_attempt.unwrap();
+		}
+		// do the thing
+		if let Ok(_) = snapshot.set_name(id, &name) {/*idk*/}
+	    },
+	    9 => { // set value for node
+		println!("Entered set value command!");
+		let mut id_packet = [0;8];
+		stream.read(&mut id_packet)?;
+		let id = u64::from_be_bytes(id_packet);
+		println!("Read id!");
+		// get value
+		let mut value_type = [0;1];
+		let value: Val;
+		stream.read(&mut value_type)?;
+		match value_type[0] {
+		    0 => {value = Val::None;},
+		    1 => {
+			let mut num_packet = [0;8];
+			stream.read(&mut num_packet)?;
+			let num = isize::from_be_bytes(num_packet);
+			value = Val::Num(num);
+		    },
+		    2 => {
+			let mut txt_size_packet = [0;8];
+			stream.read(&mut txt_size_packet)?;
+			let txt_size = u64::from_be_bytes(txt_size_packet);
+			let mut txt_packet: Vec<u8> = Vec::new();
+			txt_packet.resize(txt_size as usize, 0);
+			stream.read(&mut txt_packet[0..txt_size as usize])?;
+			let txt = String::from_utf8(txt_packet)
+			    .expect("Could not convert text packet to string!");
+			value = Val::Txt(txt);
+		    },
+		    3 => {
+			let mut bool_packet = [0;1];
+			stream.read(&mut bool_packet)?;
+			match bool_packet[0] {
+			    0 => value = Val::Bool(false),
+			    1 => value = Val::Bool(true),
+			    _ => unreachable!()
+			}
+		    },
+		    _ => unreachable!()
+		}
+		println!("Read value!");
+		// get graph
+		println!("Connection [{}] is trying to get read access!", stream_address);
+		let mut snapshot;
+		let first_attempt = graph.try_write();
+		if first_attempt.is_err() {
+		    stream.write(&(67 as u64).to_be_bytes())?;
+		    stream.write("The graph is currently inacessible, waiting to receive read access!".as_bytes())?;
+		    snapshot = graph.write().unwrap();
+		} else {
+		    snapshot = first_attempt.unwrap();
+		}
+		// do the thing
+		if let Ok(_) = snapshot.set_value(id, value) {/* idk you could print that it succeeded wtf*/}
+	    },
+	    10 => { // print graph
+		println!("Connection [{}] is trying to get read access!", stream_address);
+		let dotcode;
+		let first_attempt = graph.try_read();
+		if first_attempt.is_err() {
+		    println!("The graph is currently inacessible, waiting to receive read access!");
+		    let snapshot = graph.read().unwrap();
+		    dotcode = snapshot.print_graph();
+		} else {
+		    dotcode = first_attempt.unwrap().print_graph();
+		}
+		println!("Attempting to write test.dot!");
+		std::fs::write("test.dot", dotcode.as_bytes())?;
+		println!("Attempting to execute dot -Tpng test.dot!");
+		let output = std::process::Command::new("dot").arg("-Tpng").arg("test.dot").output().expect("failed executing dot!");
+		println!("Attempting to write test.png!");
+		std::fs::write("test.png", output.stdout)?;
 	    },
 	    _ => unreachable!()
 	}
