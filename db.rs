@@ -9,17 +9,129 @@ use std::io::{Read, Write};
 use std::sync::{Arc, RwLock};
 
 // TODO:
-//   1. Querying
 
+#[derive(Debug)]
 struct Graph {
     graph: HashMap<u64, Node>,
+    name_lookup: HashMap<String, Vec<u64>>,
+    value_lookup: HashMap<Val, Vec<u64>>,
     counter: u64
+}
+enum Orders {
+    First,
+    Last
+}
+// Methods concerning querying
+impl Graph {
+    fn select_by_name(&self, name: &str) -> Vec<&Node> {
+	let mut out: Vec<&Node> = Vec::new();
+	if let Some(indices) = self.name_lookup.get(name) {
+	    for i in indices.iter() {
+		out.push(self.graph.get(i).unwrap());
+	    }
+	}
+	return out
+    }
+    fn select_amount_by_name(&self, name: &str, mut amount: usize, ordering: Orders) -> Vec<&Node> {
+	let mut out: Vec<&Node> = Vec::new();
+	if let Some(indices) = self.name_lookup.get(name) {
+	    let mut indices = indices.clone();
+	    match ordering {
+		Orders::First => indices.sort_unstable_by(|a, b| a.cmp(b)),
+		Orders::Last => indices.sort_unstable_by(|a, b| b.cmp(a))
+	    }
+	    if amount >= indices.len() {amount = indices.len()-1}
+	    for i in indices[0..amount+1].iter() {
+		out.push(self.graph.get(i).unwrap());
+	    }
+	}
+	return out
+    }
+    fn select_by_value<T: Wrappable>(&self, value: T) -> Vec<&Node> {
+	let mut out: Vec<&Node> = Vec::new();
+	if let Some(indices) = self.value_lookup.get(&value.wrap()) {
+	    for i in indices.iter() {
+		out.push(self.graph.get(i).unwrap());
+	    }
+	}
+	return out
+    }
+    fn select_amount_by_value<T: Wrappable>(&self, value: T, mut amount: usize, ordering: Orders) -> Vec<&Node> {
+	let mut out: Vec<&Node> = Vec::new();
+	if let Some(indices) = self.value_lookup.get(&value.wrap()) {
+	    let mut indices = indices.clone();
+	    match ordering {
+		Orders::First => indices.sort_unstable_by(|a, b| a.cmp(b)),
+		Orders::Last => indices.sort_unstable_by(|a, b| b.cmp(a))
+	    }
+	    if amount >= indices.len() {amount = indices.len()-1}
+	    for i in indices[0..amount+1].iter() {
+		out.push(self.graph.get(i).unwrap());
+	    }
+	}
+	return out
+    }
+    fn select_backlinks(&self, id: u64) -> Vec<&Node> {
+	let mut out: Vec<&Node> = Vec::new();
+	if let Some(n) = self.graph.get(&id) {
+	    let indices = &n.backlinks;
+	    for i in indices.iter() {
+		out.push(self.graph.get(i).unwrap());
+	    }
+	}
+	return out
+    }
+    fn select_amount_backlinks(&self, id: u64, mut amount: usize, ordering: Orders) -> Vec<&Node> {
+	let mut out: Vec<&Node> = Vec::new();
+	if let Some(n) = self.graph.get(&id) {
+	    let indices = &n.backlinks;
+	    for i in indices.iter() {
+		out.push(self.graph.get(i).unwrap());
+	    }
+	}
+	match ordering {
+	    Orders::First => out.sort_unstable_by(|a, b| a.id.partial_cmp(&b.id).unwrap()),
+	    Orders::Last  => out.sort_unstable_by(|a, b| b.id.partial_cmp(&a.id).unwrap()),
+	}
+	if amount >= out.len() {amount = out.len()-1;}
+	return out[0..amount+1].to_vec()
+    }
+    fn select_link(&self, id: u64) -> Vec<&Node> {
+	let mut out: Vec<&Node> = Vec::new();
+	if let Some(n) = self.graph.get(&id) {
+	    let indices = &n.relations;
+	    for i in indices.iter() {
+		out.push(self.graph.get(i).unwrap());
+	    }
+	}
+	return out
+    }
+    fn select_amount_link(&self, id: u64, mut amount: usize, ordering: Orders) -> Vec<&Node> {
+	let mut out: Vec<&Node> = Vec::new();
+	if let Some(n) = self.graph.get(&id) {
+	    let indices = &n.relations;
+	    for i in indices.iter() {
+		out.push(self.graph.get(i).unwrap());
+	    }
+	}
+	match ordering {
+	    Orders::First => out.sort_unstable_by(|a, b| a.id.partial_cmp(&b.id).unwrap()),
+	    Orders::Last  => out.sort_unstable_by(|a, b| b.id.partial_cmp(&a.id).unwrap()),
+	}
+	if amount >= out.len() {amount = out.len()-1}
+	return out[0..amount+1].to_vec()
+    }
+    fn select_by_id(&self, id: u64) -> Option<&Node> {
+	self.graph.get(&id)
+    }
 }
 // Methods for making and mutating the graph
 impl Graph {
     fn new() -> Self {
 	return Self {
 	    graph: HashMap::new(),
+	    name_lookup: HashMap::new(),
+	    value_lookup: HashMap::new(),
 	    counter: 0
 	}
     }
@@ -28,8 +140,17 @@ impl Graph {
 	    name: name.to_string(),
 	    id: self.counter,
 	    value: value.wrap(),
-	    relations: Vec::new()
+	    relations: Vec::new(),
+	    backlinks: Vec::new()
 	};
+	if let Some(mut res) = self.name_lookup.insert(node.name.clone(), vec![node.id]) {
+	    let n = self.name_lookup.get_mut(&node.name).unwrap();
+	    n.append(&mut res);
+	}
+	if let Some(mut res) = self.value_lookup.insert(node.value.clone(), vec![node.id]) {
+	    let v = self.value_lookup.get_mut(&node.value).unwrap();
+	    v.append(&mut res);
+	}
 	self.graph.insert(self.counter, node);
 	self.counter += 1;
 	return self.counter - 1
@@ -39,25 +160,78 @@ impl Graph {
 	    name: name.to_string(),
 	    id: id,
 	    value: value.wrap(),
-	    relations: Vec::new()
+	    relations: Vec::new(),
+	    backlinks: Vec::new()
 	};
+	if let Some(mut res) = self.name_lookup.insert(node.name.clone(), vec![node.id]) {
+	    let n = self.name_lookup.get_mut(&node.name).unwrap();
+	    n.append(&mut res);
+	}
+	if let Some(mut res) = self.value_lookup.insert(node.value.clone(), vec![node.id]) {
+	    let v = self.value_lookup.get_mut(&node.value).unwrap();
+	    v.append(&mut res);
+	}
 	self.graph.insert(id, node);
 	if self.counter < id {self.counter = id}
     }
     fn delete(&mut self, id: u64) -> Option<Node> {
-	self.graph.remove(&id)
+	if let Some(node) = self.graph.remove(&id) {
+	    for i in node.relations.iter() {
+		let n = self.graph.get_mut(i).unwrap();
+		n.backlinks.retain(|id| *id != node.id);
+	    }
+	    self.name_lookup.remove(&node.name);
+	    self.value_lookup.remove(&node.value);
+	    Some(node)
+	} else {
+	    None
+	}
     }
     fn set_relations(&mut self, id: u64, relations: Vec<u64>) -> Result<(), String> {
+	let old_rels: Vec<u64>;
 	if let Some(node) = self.graph.get_mut(&id) {
+	    old_rels = node.relations.clone();
 	    node.relations = relations;
 	} else {
 	    return Err("Could not find node under given id!".to_string())
+	}
+	for i in old_rels.iter() {
+	    let n = self.graph.get_mut(i).unwrap();
+	    n.backlinks.retain(|idk| *idk != id);
+	}
+	let node = self.graph.get(&id).unwrap().clone();
+	for i in node.relations.iter() {
+	    if let Some(n) = self.graph.get_mut(i) {
+		n.backlinks.push(id);
+	    } else {
+		return Err(format!("Could not find node under id in relations: [{}]", i))
+	    }
+	}
+	Ok(())
+    }
+    fn append_relations(&mut self, id: u64, mut relations: Vec<u64>) -> Result<(), String> {
+	if let Some(node) = self.graph.get_mut(&id) {
+	    node.relations.append(&mut relations);
+	} else {
+	    return Err("Could not find node under given id!".to_string())
+	}
+	for i in relations.iter() {
+	    if let Some(node) = self.graph.get_mut(i) {
+		node.backlinks.push(id);
+	    } else {
+		return Err(format!("Could not find node under id in relations: [{}]", i))
+	    }
 	}
 	Ok(())
     }
     fn set_name(&mut self, id: u64, name: &str) -> Result<(), String> {
 	if let Some(node) = self.graph.get_mut(&id) {
+	    self.name_lookup.remove(&node.name);
 	    node.name = name.to_string();
+	    if let Some(mut res) = self.name_lookup.insert(node.name.clone(), vec![node.id]) {
+		let n = self.name_lookup.get_mut(&node.name).unwrap();
+		n.append(&mut res);
+	    }
 	} else {
 	    return Err("Could not find node under given id!".to_string())
 	}
@@ -65,7 +239,12 @@ impl Graph {
     }
     fn set_value<T: Wrappable>(&mut self, id: u64, value: T) -> Result<(), String> {
 	if let Some(node) = self.graph.get_mut(&id) {
+	    self.value_lookup.remove(&node.value);
 	    node.value = value.wrap();
+	    if let Some(mut res) = self.value_lookup.insert(node.value.clone(), vec![node.id]) {
+		let n = self.value_lookup.get_mut(&node.value).unwrap();
+		n.append(&mut res);
+	    }
 	} else {
 	    return Err("Could not find node under given id!".to_string())
 	}
@@ -100,7 +279,23 @@ impl Graph {
 	for i in bytes.split(|byte| *byte == 0x0a) {
 	    if !i.is_empty() {
 		let node = Node::from_bytes(i.to_vec());
+		if let Some(n) = out.name_lookup.get_mut(&node.name) {
+		    n.push(node.id);
+		} else {
+		    out.name_lookup.insert(node.name.clone(), vec![node.id]);
+		}
+		if let Some(n) = out.value_lookup.get_mut(&node.value) {
+		    n.push(node.id);
+		} else {
+		    out.value_lookup.insert(node.value.clone(), vec![node.id]);
+		}
 		out.graph.insert(node.id, node);
+	    }
+	}
+	for (k, v) in out.graph.clone().iter() {
+	    for i in v.relations.iter() {
+		let n = out.graph.get_mut(i).unwrap();
+		n.backlinks.push(*k);
 	    }
 	}
 	return out
@@ -115,12 +310,14 @@ impl std::fmt::Display for Graph {
     }
 }
 
+#[derive(Debug, Clone)]
 struct Node {
     name: String,
     id: u64,
     value: Val,
     // set of ids for the interlinked nodes
-    relations: Vec<u64>
+    relations: Vec<u64>,
+    backlinks: Vec<u64>
 }
 // Methods concerning serialization
 impl Node {
@@ -176,7 +373,7 @@ impl Node {
 		    );
 		}
 	    }
-	return Node {id: id, name: name, value: value, relations: relations}
+	return Node {id: id, name: name, value: value, relations: relations, backlinks: Vec::new()}
     }
 }
 impl std::fmt::Display for Node {
@@ -185,13 +382,8 @@ impl std::fmt::Display for Node {
 	           self.id, self.name, self.value, self.relations)
     }
 }
-impl std::fmt::Debug for Node {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-	write!(f, "id {} name {} value {} links {:?}",
-	           self.id, self.name, self.value, self.relations)
-    }
-}
 
+#[derive(Clone, Debug)]
 enum Val {
     None,
     Num(isize),
@@ -246,13 +438,36 @@ impl std::fmt::Display for Val {
 	}
     }
 }
-impl std::fmt::Debug for Val {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl std::cmp::PartialEq for Val {
+    fn eq(&self, other: &Self) -> bool {
 	match self {
-	    Self::None    => write!(f, "None"),
-	    Self::Num(x)  => write!(f, "{}", x),
-	    Self::Txt(s)  => write!(f, "{}", s),
-	    Self::Bool(b) => write!(f, "{}", b)
+	    Self::None => match other {
+		Self::None => return true,
+		_ => return false
+	    },
+	    Self::Num(x) => match other {
+		Self::Num(y) => return x == y,
+		_ => return false
+	    },
+	    Self::Txt(s) => match other {
+		Self::Txt(t) => return s == t,
+		_ => return false
+	    },
+	    Self::Bool(b) => match other {
+		Self::Bool(c) => return b == c,
+		_ => return false
+	    }
+	}
+    }
+}
+impl std::cmp::Eq for Val {}
+impl std::hash::Hash for Val {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+	match self {
+	    Self::None => 0.hash(state),
+	    Self::Num(x) => {1.hash(state); x.hash(state)},
+	    Self::Txt(s) => {2.hash(state); s.hash(state)},
+	    Self::Bool(b) => {3.hash(state); b.hash(state)}
 	}
     }
 }
@@ -264,6 +479,51 @@ impl Wrappable for &str   {fn wrap(self) -> Val {Val::Txt(self.to_string())}}
 impl Wrappable for bool   {fn wrap(self) -> Val {Val::Bool(self)}}
 impl Wrappable for ()     {fn wrap(self) -> Val {Val::None}}
 impl Wrappable for Val    {fn wrap(self) -> Val {self}}
+
+trait QueryingAriths {
+    fn union(&self, _: &Self) -> Self; // OR
+    fn intersection(&self, _: &Self) -> Self; // AND
+    fn difference(&self, _: &Self) -> Self; // XOR
+}
+// Unions and shit
+impl<T> QueryingAriths for Vec<T> where
+    T: PartialEq + Clone {
+    fn union(&self, other: &Self) -> Self {
+	let mut out: Self = Vec::new();
+	for i in self.iter() {
+	    out.push(i.clone());
+	}
+	for i in other.iter() {
+	    if !out.contains(i) {
+		out.push(i.clone());
+	    }
+	}
+	return out
+    }
+    fn intersection(&self, other: &Self) -> Self {
+	let mut out: Self = Vec::new();
+	for i in self.iter() {
+	    if other.contains(i) {
+		out.push(i.clone());
+	    }
+	}
+	return out
+    }
+    fn difference(&self, other: &Self) -> Self {
+	let mut out: Self = Vec::new();
+	for i in self.iter() {
+	    if !other.contains(i) {
+		out.push(i.clone());
+	    }
+	}
+	for i in other.iter() {
+	    if !self.contains(i) {
+		out.push(i.clone());
+	    }
+	}
+	return out
+    }
+}
 
 fn main() {
     let mut args = args().collect::<VecDeque<String>>();
@@ -316,20 +576,23 @@ fn main() {
 	graph = Arc::new(RwLock::new(Graph::from_bytes(std::fs::read(open_filename).expect("Couldn't open file!"))));
     } else {
 	graph = Arc::new(RwLock::new(Graph::new()));
-	/*let mut temp = Graph::new();
-	temp.insert("node0", 15, 0);
-	temp.insert("node1", "some text", 1);
-	temp.insert("node2", true, 2);
-	temp.insert("node3", false, 3);
-	temp.insert("node4", false, 4);
-	temp.insert("node5", false, 5);
-	temp.insert("node6", false, 6);
-	temp.set_relations(0, vec![1, 2, 3]);
-	temp.set_relations(2, vec![0, 3]);
-	temp.set_relations(3, vec![2]);
-	temp.set_relations(4, vec![2]);
-	temp.set_relations(5, vec![2]);
-	graph = Arc::new(RwLock::new(temp));*/
+	//let mut temp = Graph::new();
+	//temp.insert("node0", 15, 0);
+	//temp.insert("node1", "some text", 1);
+	//temp.insert("node2", true, 2);
+	//temp.insert("node3", false, 3);
+	//temp.insert("node4", false, 4);
+	//temp.insert("node5", false, 5);
+	//temp.insert("node6", false, 6);
+	//temp.set_relations(0, vec![1, 2, 3]);
+	//temp.set_relations(2, vec![0, 3]);
+	//temp.set_relations(3, vec![2]);
+	//temp.set_relations(4, vec![2]);
+	//temp.set_relations(5, vec![2]);
+	//println!("{:?}", temp);
+	//temp.delete(0);
+	//println!("{:?}", temp);
+	//graph = Arc::new(RwLock::new(temp));
     }
     // look through incoming connections and spawn new threads for each
     // TODO: some way to shut down daze without C-c
@@ -373,9 +636,12 @@ fn handle_requests(mut stream: TcpStream, graph: Arc<RwLock<Graph>>) -> std::io:
 		    let snapshot = graph.read().unwrap();
 		    let printout = format!("{}", snapshot);
 		    stream.write(&(printout.len() as u64).to_be_bytes())?;
+		    println!("{:?}", snapshot);
 		    stream.write(printout.as_bytes())?;
 		} else {
-		    let printout = format!("{}", first_attempt.unwrap());
+		    let snapshot = first_attempt.unwrap();
+		    let printout = format!("{}", snapshot);
+		    println!("{:?}", snapshot);
 		    stream.write(&(printout.len() as u64).to_be_bytes())?;
 		    stream.write(printout.as_bytes())?;
 		}
