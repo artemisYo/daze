@@ -4,7 +4,6 @@ import util.control.Breaks._
 import scala.io.StdIn
 
 // TODO:
-//   0. Do while parser
 //   1. Decimal number parser, aka. floating point support
 //   2. Think about punctuation parser
 
@@ -74,18 +73,17 @@ class Str(token: String)(tag: Tag = StrTag(token), delimiter: Char = ' ', doDeli
 
 class AnyStr(delimiter: Char = ' ', doDelimSkip: Boolean = true) extends Parser {
   def run(input: String, index: Int = 0): (String, Int, Tag) = {
-    var newIndex = input.indexOf(delimiter, index)
-    if newIndex == -1 then
-      val out = Any(input.substring(index, input.length()))
-      if out.inner.isEmpty then
-        (input, input.length(), ErrorTag("Reached end of string"))
-      else
-        (input, input.length(), Any(input.substring(index, input.length())))
+    if index == input.length() then
+      (input, index, ErrorTag("Reached end of string"))
     else
-      newIndex += 1
-      val out = Any(input.substring(index, newIndex))
-      while input.charAt(newIndex) == delimiter do newIndex += 1
-      (input, newIndex, out)
+      var newIndex = input.indexOf(delimiter, index)
+      if newIndex == -1 then
+        newIndex = input.length()
+        (input, newIndex, Any(input.substring(index, newIndex)))
+      else
+        val out = input.substring(index, newIndex)
+        while newIndex < input.length() && input.charAt(newIndex) == delimiter do newIndex += 1
+        (input, newIndex, Any(out))
   }
 }
 
@@ -98,9 +96,13 @@ class Num(delimiter: Char = ' ', doDelimSkip: Boolean = true)(groupStop: Char = 
       while (input.length() > newIndex && (input.charAt(newIndex).isDigit || (input.charAt(newIndex) == groupStop && doGroupStop))) {
         newIndex += 1
       }
-      val result = input.substring(index, newIndex).filterNot(_ == groupStop).toInt
-      while input.length() > newIndex && input.charAt(newIndex) == delimiter && doDelimSkip do newIndex += 1
-      (input, newIndex, NumTag(result))
+      val temp = input.substring(index, newIndex).filterNot(_ == groupStop)
+      if temp.isEmpty then
+        (input, index, ErrorTag("Could not Match"))
+      else
+        val result = input.substring(index, newIndex).filterNot(_ == groupStop).toInt
+        while input.length() > newIndex && input.charAt(newIndex) == delimiter && doDelimSkip do newIndex += 1
+        (input, newIndex, NumTag(result))
   }
 }
 
@@ -116,9 +118,6 @@ class Dig(delimiter: Char = ' ', doDelimSkip: Boolean = true)() extends Parser {
       (input, index, ErrorTag("Failed to match digit"))
   }
 }
-// TODO: error log says this has some indexOutOfBounds (-1) problem, probably something about not being able to match so it tries to go to next parser, when it's at the end
-// one error happens when running "save" in the app, it should match the case after Str("save") & AnyStr(), but it doesn't seem so
-// the error actually originates in Constraint not pushing any ErrorTag onto the results buffer, so it tries to remove length-1 which is 0-1
 class Choice(var cases: Vector[Parser]) extends Parser {
   def run(input: String, index: Int = 0): (String, Int, Tag) = {
     var temp: (String, Int, Tag) = (input, index, ErrorTag("Could not Match"))
@@ -188,9 +187,6 @@ class Count(val parser: Parser) extends Parser {
   }
 }
 
-// TODO: Problem with "append nodename anystring"
-// TODO: Problem with "set value anystring"
-// TODO: Problem with "set name nodename " (specifically space at the end)
 @main def hello: Unit = {
   val value = Str("true")(BoolLit(true)) | Str("false")(BoolLit(false)) | Num()() | AnyStr()
   val par = Str("exit")(Exit())
