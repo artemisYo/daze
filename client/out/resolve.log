@@ -1,0 +1,16 @@
+all
+clean
+init
+inspect
+par
+path
+plan
+resolve
+show
+showNamed
+shutdown
+shutdown
+version
+version
+visualize
+visualizePlan

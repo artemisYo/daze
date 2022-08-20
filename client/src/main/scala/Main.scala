@@ -4,23 +4,56 @@ import util.control.Breaks._
 import scala.io.StdIn
 
 // TODO:
+//   0. Do while parser
 //   1. Decimal number parser, aka. floating point support
 //   2. Think about punctuation parser
-//   3. Combinators having some fancy syntax like "parser1 + parser2" being equivalent to "Choice(Vector(parser1, parser2))"
 
 trait Tag {
   val isErr: Boolean = false
 }
 case class ErrorTag(error: String) extends Tag {override val isErr: Boolean = true}
 case class StrTag(inner: String) extends Tag
+case class Any(inner: String) extends Tag
 case class NumTag(inner: Int) extends Tag
 case class DigTag(inner: Byte) extends Tag
 
+// this is a hack to make Constraint be able to return Tag eventhough it has multiple results
+// NOTE: functions which return this are unreliable cuz yeah
+case class ManyTag(inner: ArrayBuffer[Tag]) extends Tag
+
+case class Exit() extends Tag
+case class Print() extends Tag
+case class Save() extends Tag
+case class Append() extends Tag
+case class Insert() extends Tag
+case class Delete() extends Tag
+case class Set() extends Tag
+case class Relations() extends Tag
+case class Name() extends Tag
+case class Value() extends Tag
+case class PrintGraph() extends Tag
+case class BoolLit(inner: Boolean) extends Tag
+
 trait Parser {
-  def run(inputState: ParsingState): ParsingState
+  def run(input: String, index: Int): (String, Int, Tag)
+  def run(inputState: ParsingState): ParsingState = {
+    val out = run(inputState.input, inputState.index)
+    ParsingState(input = out(0), index = out(1), results = inputState.results += out(2))
+  }
+  def &(that: Parser): Constraint = this match
+  case x: Constraint => Constraint(x.constraints :+ that)
+  case other => Constraint(Vector(this, that))
+
+  def |(that: Parser): Choice = this match
+  case x: Choice => Choice(x.cases :+ that)
+  case other => Choice(Vector(this, that))
+
+  def count: Count = Count(this)
 }
 
-class ParsingState(val input: String, val index: Int = 0, val results: ArrayBuffer[Tag] = ArrayBuffer[Tag]()) {
+def *:(parser: Parser): Count = parser.count
+
+class ParsingState(val input: String, var index: Int = 0, val results: ArrayBuffer[Tag] = ArrayBuffer[Tag]()) {
   override def toString(): String = {
     s"input:   $input,\nindex:   $index,\nresults: $results"
   }
@@ -37,9 +70,22 @@ class Str(token: String)(tag: Tag = StrTag(token), delimiter: Char = ' ', doDeli
     else
       (input, index, ErrorTag(s"Failed to match $token"))
   }
-  def run(inputState: ParsingState): ParsingState = {
-    val out = run(inputState.input, inputState.index)
-    ParsingState(input = out(0), index = out(1), results = inputState.results += out(2))
+}
+
+class AnyStr(delimiter: Char = ' ', doDelimSkip: Boolean = true) extends Parser {
+  def run(input: String, index: Int = 0): (String, Int, Tag) = {
+    var newIndex = input.indexOf(delimiter, index)
+    if newIndex == -1 then
+      val out = Any(input.substring(index, input.length()))
+      if out.inner.isEmpty then
+        (input, input.length(), ErrorTag("Reached end of string"))
+      else
+        (input, input.length(), Any(input.substring(index, input.length())))
+    else
+      newIndex += 1
+      val out = Any(input.substring(index, newIndex))
+      while input.charAt(newIndex) == delimiter do newIndex += 1
+      (input, newIndex, out)
   }
 }
 
@@ -56,10 +102,6 @@ class Num(delimiter: Char = ' ', doDelimSkip: Boolean = true)(groupStop: Char = 
       while input.length() > newIndex && input.charAt(newIndex) == delimiter && doDelimSkip do newIndex += 1
       (input, newIndex, NumTag(result))
   }
-  def run(inputState: ParsingState): ParsingState = {
-    val out = run(inputState.input, inputState.index)
-    ParsingState(input = out(0), index = out(1), results = inputState.results += out(2))
-  }
 }
 
 class Dig(delimiter: Char = ' ', doDelimSkip: Boolean = true)() extends Parser {
@@ -73,14 +115,23 @@ class Dig(delimiter: Char = ' ', doDelimSkip: Boolean = true)() extends Parser {
     else
       (input, index, ErrorTag("Failed to match digit"))
   }
-  def run(inputState: ParsingState): ParsingState = {
-    val out = run(inputState.input, inputState.index)
-    ParsingState(input = out(0), index = out(1), results = inputState.results += out(2))
-  }
 }
-
-class Choice(val cases: Vector[Parser]) extends Parser {
-  def run(inputState: ParsingState): ParsingState = {
+// TODO: error log says this has some indexOutOfBounds (-1) problem, probably something about not being able to match so it tries to go to next parser, when it's at the end
+// one error happens when running "save" in the app, it should match the case after Str("save") & AnyStr(), but it doesn't seem so
+// the error actually originates in Constraint not pushing any ErrorTag onto the results buffer, so it tries to remove length-1 which is 0-1
+class Choice(var cases: Vector[Parser]) extends Parser {
+  def run(input: String, index: Int = 0): (String, Int, Tag) = {
+    var temp: (String, Int, Tag) = (input, index, ErrorTag("Could not Match"))
+    breakable {
+      for (parser <- cases) {
+        temp = parser.run(temp(0), temp(1))
+        if !temp(2).isErr then
+          break
+      }
+    }
+    temp
+  }
+  override def run(inputState: ParsingState): ParsingState = {
     var temp = inputState
     breakable {
       for (parser <- cases) {
@@ -94,16 +145,23 @@ class Choice(val cases: Vector[Parser]) extends Parser {
   }
 }
 
-class Constraint(val constraints: Vector[Parser]) extends Parser {
-  def run(inputState: ParsingState): ParsingState = {
+class Constraint(var constraints: Vector[Parser]) extends Parser {
+  def run(input: String, index: Int = 0): (String, Int, Tag) = {
+    var temp = run(ParsingState(input, index))
+    (temp.input, temp.index, ManyTag(temp.results))
+  }
+  override def run(inputState: ParsingState): ParsingState = {
     var temp = inputState
+    val oldIndex = inputState.index
     var counter = 0
     breakable {
       for (parser <- constraints) {
         counter += 1
         temp = parser.run(temp)
         if temp.results.last.isErr then
+          temp.index = oldIndex
           temp.results.remove(temp.results.length-counter, counter)
+          temp.results += ErrorTag("Could not Match")
           break
       }
     }
@@ -111,10 +169,51 @@ class Constraint(val constraints: Vector[Parser]) extends Parser {
   }
 }
 
+class Count(val parser: Parser) extends Parser {
+  def run(input: String, index: Int = 0): (String, Int, Tag) = {
+    var temp = run(ParsingState(input, index))
+    (temp.input, temp.index, ManyTag(temp.results))
+  }
+  override def run(inputState: ParsingState): ParsingState = {
+    var temp = inputState
+    breakable {
+      while (true) {
+        temp = parser.run(temp)
+        if temp.results.last.isErr then
+          temp.results.remove(temp.results.length-1)
+          break
+      }
+    }
+    temp
+  }
+}
+
+// TODO: Problem with "append nodename anystring"
+// TODO: Problem with "set value anystring"
+// TODO: Problem with "set name nodename " (specifically space at the end)
 @main def hello: Unit = {
-  var state = ParsingState("Hello there!")
-  val par1 = Str("Hello")()
-  val par2 = Str("there")()
-  val par  = Choice(Vector(par1, par2))
-  println(par.run(par.run(state)))
+  val value = Str("true")(BoolLit(true)) | Str("false")(BoolLit(false)) | Num()() | AnyStr()
+  val par = Str("exit")(Exit())
+            | Str("print")(Print())
+            | Str("graphviz")(PrintGraph())
+            | Str("save")(Save()) & AnyStr()
+            | Str("save")(Save())
+            | Str("append")(Append()) & AnyStr() & value
+            | Str("insert")(Insert()) & AnyStr() & value & Num()()
+            | Str("delete")(Delete()) & Num()()
+            | Str("set")(Set()) & (Str("relations")(Relations()) & *:(Num()()) | Str("name")(Name()) & AnyStr() | Str("value")(Value()) & value)
+  breakable {
+    while (true) {
+      val input = StdIn.readLine("    $> ")
+      println(input)
+      // TODO: this match thingy cuz it's the logic of the program
+      val state = par.run(ParsingState(input))
+      for (tag <- state.results) {
+        tag match
+        case Exit() => break
+        case ErrorTag(e) => println(s"[Error]: Error occured: $e")
+        case other => println(s"[Error]: Could not recognise $other")
+      }
+    }
+  }
 }
