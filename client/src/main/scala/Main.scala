@@ -4,6 +4,7 @@ import util.control.Breaks._
 import scala.io.StdIn
 
 // TODO:
+//   0. Signed-unsigned num parser
 //   1. Decimal number parser, aka. floating point support
 //   2. Think about punctuation parser
 
@@ -23,6 +24,7 @@ case class ManyTag(inner: ArrayBuffer[Tag]) extends Tag
 case class Exit() extends Tag
 case class Print() extends Tag
 case class Save() extends Tag
+case class SaveAs() extends Tag
 case class Append() extends Tag
 case class Insert() extends Tag
 case class Delete() extends Tag
@@ -87,12 +89,14 @@ class AnyStr(delimiter: Char = ' ', doDelimSkip: Boolean = true) extends Parser 
   }
 }
 
-class Num(delimiter: Char = ' ', doDelimSkip: Boolean = true)(groupStop: Char = '.', doGroupStop: Boolean = true) extends Parser {
+class Num(signed: Boolean = true)(delimiter: Char = ' ', doDelimSkip: Boolean = true, groupStop: Char = '.', doGroupStop: Boolean = true) extends Parser {
   def run(input: String, index: Int = 0): (String, Int, Tag) = {
     if input.length() <= index then
       (input, index, ErrorTag("End of string reached"))
     else
       var newIndex = index
+      if input.charAt(newIndex) == '-' && signed then
+        newIndex += 1
       while (input.length() > newIndex && (input.charAt(newIndex).isDigit || (input.charAt(newIndex) == groupStop && doGroupStop))) {
         newIndex += 1
       }
@@ -192,12 +196,12 @@ class Count(val parser: Parser) extends Parser {
   val par = Str("exit")(Exit())
             | Str("print")(Print())
             | Str("graphviz")(PrintGraph())
-            | Str("save")(Save()) & AnyStr()
+            | Str("save")(SaveAs()) & AnyStr()
             | Str("save")(Save())
             | Str("append")(Append()) & AnyStr() & value
-            | Str("insert")(Insert()) & AnyStr() & value & Num()()
-            | Str("delete")(Delete()) & Num()()
-            | Str("set")(Set()) & (Str("relations")(Relations()) & *:(Num()()) | Str("name")(Name()) & AnyStr() | Str("value")(Value()) & value)
+            | Str("insert")(Insert()) & AnyStr() & value & Num(signed = false)()
+            | Str("delete")(Delete()) & Num(signed = false)()
+            | Str("set")(Set()) & Num(signed = false)() & (Str("relations")(Relations()) & *:(Num(signed = false)()) | Str("name")(Name()) & AnyStr() | Str("value")(Value()) & value)
   breakable {
     while (true) {
       val input = StdIn.readLine("    $> ")

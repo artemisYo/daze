@@ -687,8 +687,12 @@ fn main() {
 }
 
 // TODO: Do the actual request handling
+//       the querying methods could be done by saving the intermediate results in a variable
+//       which get's cleared at the end of the query
+//       which can be used for shit like union
 fn handle_requests(mut stream: TcpStream, graph: Arc<RwLock<Graph>>) -> std::io::Result<()> {
     let stream_address = stream.peer_addr()?;
+    let mut querying_results = Vec::new();
     println!("accepted a stream: {:?}", stream_address);
     loop {
         let mut command = [0; 1];
@@ -1074,9 +1078,9 @@ fn handle_requests(mut stream: TcpStream, graph: Arc<RwLock<Graph>>) -> std::io:
                 let mut snapshot;
                 let first_attempt = graph.try_write();
                 if first_attempt.is_err() {
-                    stream.write(&(67 as u64).to_be_bytes())?;
+                    stream.write(&(68 as u64).to_be_bytes())?;
                     stream.write(
-                        "The graph is currently inacessible, waiting to receive read access!"
+                        "The graph is currently inacessible, waiting to receive write access!"
                             .as_bytes(),
                     )?;
                     snapshot = graph.write().unwrap();
@@ -1112,6 +1116,45 @@ fn handle_requests(mut stream: TcpStream, graph: Arc<RwLock<Graph>>) -> std::io:
                     .expect("failed executing dot!");
                 println!("Attempting to write test.png!");
                 std::fs::write("test.png", output.stdout)?;
+            }
+            11 => {
+                // select by name
+                let mut name_size_packet = [0; 8];
+                stream.read(&mut name_size_packet)?;
+                let mut name_size = usize::from_be(name_size_packet);
+                let mut name_packet: Vec<u8> = Vec::new();
+                name_packet.resize(name_size, 0);
+                stream.read(&mut name_packet);
+                let mut name = String::from_utf8(name_packet);
+                // get graph
+                let first_attempt = graph.try_read();
+                if first_attempt.is_err() {
+                    stream.write(&(67 as u64).to_be_bytes())?;
+                    stream.write(
+                        "The graph is currently inacessible, waiting to receive read access!"
+                            .as_bytes(),
+                    )?;
+                    snapshot = graph.read().unwrap();
+                } else {
+                    snapshot = first_attempt.unwrap();
+                }
+                querying_results.append(&mut snapshot.select_by_name(&name));
+            }
+            12 => {
+                // TODO: select by value
+                // get graph
+                let first_attempt = graph.try_read();
+                if first_attempt.is_err() {
+                    stream.write(&(67 as u64).to_be_bytes())?;
+                    stream.write(
+                        "The graph is currently inacessible, waiting to receive read access!"
+                            .as_bytes(),
+                    )?;
+                    snapshot = graph.read().unwrap();
+                } else {
+                    snapshot = first_attempt.unwrap();
+                }
+                querying_results.append(&mut snapshot.select_by_name(&name));
             }
             _ => unreachable!(),
         }
